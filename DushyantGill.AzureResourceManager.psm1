@@ -1,6 +1,6 @@
 function Load-ActiveDirectoryAuthenticationLibrary(){
   $moduleDirPath = ($ENV:PSModulePath -split ';')[0]
-  $modulePath = $moduleDirPath + "\AzureResourceManager"
+  $modulePath = $moduleDirPath + "\DushyantGill.AzureResourceManager"
   if(-not (Test-Path ($modulePath+"\Nugets"))) {New-Item -Path ($modulePath+"\Nugets") -ItemType "Directory" | out-null}
   $adalPackageDirectories = (Get-ChildItem -Path ($modulePath+"\Nugets") -Filter "Microsoft.IdentityModel.Clients.ActiveDirectory*" -Directory)
   if($adalPackageDirectories.Length -eq 0){

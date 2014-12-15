@@ -1,0 +1,28 @@
+<#
+ # Save Publish Profile file for an Azure Website to a file
+#>
+function Save-ARMWebsitePublishProfile($SubscriptionId, $ResourceGroupName, $WebsiteName, $FilePath, $AccessToken=$global:ARMCommonARMAccessToken, $Silent=$false){
+  $return = $null
+  if($AccessToken -ne $null) {
+    $header = "Bearer " + $AccessToken
+    $headers = @{"Authorization"=$header;"Content-Type"="application/json"}
+    $uri = [string]::Format("{0}/subscriptions/{1}/resourcegroups/{2}/providers/Microsoft.Web/sites/{3}/publishxml?api-version={4}",$global:ARMUrl,$SubscriptionId, $ResourceGroupName,$WebsiteName, $global:ARMAPIVersion)
+    $result = Invoke-WebRequest -Method POST -Uri $uri -Headers $headers
+    if($result.StatusCode -ge 200 -and $result.StatusCode -le 399){
+      if(-not $Silent){
+        Write-Host
+        Write-Host "Queried subscriptions successfully." -ForegroundColor Cyan
+      }
+      if($result.Content -ne $null){
+        $FilePathAndName = "$FilePath\$WebsiteName.PublishSettings"
+        $result.Content | Out-File $FilePathAndName
+        Write-Host
+        Write-Host "Publish Profile saved as $FilePathAndName" -ForegroundColor Cyan
+      }
+    }
+  }
+  else{
+    Write-Host "Not connected to an ARM. First run Connect-ARM." -ForegroundColor Yellow
+  }
+  return $return
+}

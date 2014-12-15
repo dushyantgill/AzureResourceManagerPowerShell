@@ -1,6 +1,6 @@
 $filesDirPath = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 $moduleDirPath = ($ENV:PSModulePath -split ';')[0]
-$modulePath = $moduleDirPath + "\AzureResourceManager"
+$modulePath = $moduleDirPath + "\DushyantGill.AzureResourceManager"
 
 if (Test-Path $modulePath)
 {
@@ -21,10 +21,10 @@ $nugetDownloadExpression = $modulePath + "\Nugets\nuget.exe install Microsoft.Id
 Invoke-Expression $nugetDownloadExpression
 
 Write-Host "Copying module files to the module directory" -ForegroundColor Green
-Copy-Item $filesDirPath"\AzureResourceManager.psd1" -Destination $modulePath -Force 
-Copy-Item $filesDirPath"\AzureResourceManager.psm1" -Destination $modulePath -Force 
+Copy-Item $filesDirPath"\DushyantGill.AzureResourceManager.psd1" -Destination $modulePath -Force 
+Copy-Item $filesDirPath"\DushyantGill.AzureResourceManager.psm1" -Destination $modulePath -Force 
 Copy-Item $filesDirPath"\Cmdlets\*.psm1" -Destination $modulePath"\Cmdlets" -Force 
 
-Import-Module AzureResourceManager
+Import-Module DushyantGill.AzureResourceManager
 
-Get-Command -Module AzureResourceManager
+Get-Command -Module DushyantGill.AzureResourceManager

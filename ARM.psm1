@@ -1,6 +1,6 @@
 function Load-ActiveDirectoryAuthenticationLibrary(){
-  $moduleDirPath = ($ENV:PSModulePath -split ';')[0]
-  $modulePath = $moduleDirPath + "\AzureResourceManager"
+  $moduleDirPath = [Environment]::GetFolderPath("MyDocuments") + "\WindowsPowerShell\Modules"
+  $modulePath = $moduleDirPath + "\ARM"
   if(-not (Test-Path ($modulePath+"\Nugets"))) {New-Item -Path ($modulePath+"\Nugets") -ItemType "Directory" | out-null}
   $adalPackageDirectories = (Get-ChildItem -Path ($modulePath+"\Nugets") -Filter "Microsoft.IdentityModel.Clients.ActiveDirectory*" -Directory)
   if($adalPackageDirectories.Length -eq 0){
@@ -11,7 +11,7 @@ function Load-ActiveDirectoryAuthenticationLibrary(){
       $wc = New-Object System.Net.WebClient
       $wc.DownloadFile("http://www.nuget.org/nuget.exe",$modulePath + "\Nugets\nuget.exe");
     }
-    $nugetDownloadExpression = $modulePath + "\Nugets\nuget.exe install Microsoft.IdentityModel.Clients.ActiveDirectory -OutputDirectory " + $modulePath + "\Nugets | out-null"
+    $nugetDownloadExpression = $modulePath + "\Nugets\nuget.exe install Microsoft.IdentityModel.Clients.ActiveDirectory -Version 2.14.201151115 -OutputDirectory " + $modulePath + "\Nugets | out-null"
     Invoke-Expression $nugetDownloadExpression
   }
   $adalPackageDirectories = (Get-ChildItem -Path ($modulePath+"\Nugets") -Filter "Microsoft.IdentityModel.Clients.ActiveDirectory*" -Directory)
@@ -19,7 +19,7 @@ function Load-ActiveDirectoryAuthenticationLibrary(){
   $ADAL_WindowsForms_Assembly = (Get-ChildItem "Microsoft.IdentityModel.Clients.ActiveDirectory.WindowsForms.dll" -Path $adalPackageDirectories[$adalPackageDirectories.length-1].FullName -Recurse)
   if($ADAL_Assembly.Length -gt 0 -and $ADAL_WindowsForms_Assembly.Length -gt 0){
     Write-Host "Loading ADAL Assemblies ..." -ForegroundColor Green
-    [System.Reflection.Assembly]::LoadFrom($ADAL_Assembly.FullName) | out-null
+    [System.Reflection.Assembly]::LoadFrom($ADAL_Assembly[0].FullName) | out-null
     [System.Reflection.Assembly]::LoadFrom($ADAL_WindowsForms_Assembly.FullName) | out-null
     return $true
   }
@@ -37,7 +37,15 @@ function Get-AuthenticationResult($tenant = "common", $prompt=$true, $resourceAp
   $authority = "https://login.windows.net/" + $tenant
   $authContext = New-Object "Microsoft.IdentityModel.Clients.ActiveDirectory.AuthenticationContext" -ArgumentList $authority,$false
   if($prompt){$authResult = $authContext.AcquireToken($resourceAppIdURI, $clientId, $redirectUri, [Microsoft.IdentityModel.Clients.ActiveDirectory.PromptBehavior]::Always)}
-  else{$authResult = $authContext.AcquireToken($resourceAppIdURI, $clientId, $redirectUri, [Microsoft.IdentityModel.Clients.ActiveDirectory.PromptBehavior]::Auto)}
+  else{
+      try{
+        $authResult = $authContext.AcquireToken($resourceAppIdURI, $clientId, $redirectUri, [Microsoft.IdentityModel.Clients.ActiveDirectory.PromptBehavior]::Never)
+      }
+      catch{}
+      if ($authResult -eq $null){
+        $authResult = $authContext.AcquireToken($resourceAppIdURI, $clientId, $redirectUri, [Microsoft.IdentityModel.Clients.ActiveDirectory.PromptBehavior]::Auto)      
+      }
+    }
   return $authResult
 }
 
@@ -148,7 +156,86 @@ function Get-ARMDirectoryObject($SubscriptionId, $ObjectId, $Silent=$false){
   return $return
 }
 
-function Connect-ARM ($ARMAPIVersion="2014-04-01-preview", $GraphAPIVersion="2013-11-08") {
+function Resolve-ARMDirectoryPrincipal($SubscriptionId, $PrincipalType, $DisplayNameOrUPNOrEmail, $Silent=$false){
+  $return = $null
+  if($global:ARMTenantAccessTokensGraph -ne $null) {
+    $tenantId = $global:ARMSubscriptions[$SubscriptionId].TenantId
+    $acessToken = $global:ARMTenantAccessTokensGraph[$tenantId]
+    $header = "Bearer " + $acessToken
+    $headers = @{"Authorization"=$header;"Content-Type"="application/json"}
+    if($PrincipalType.ToLower() -eq "users"){
+      $uri = [string]::Format("{0}/{1}/users?api-version={2}&`$filter=userPrincipalName eq '{3}' or startswith(userPrincipalName,'{4}')", $global:ARMGraphUrl, $tenantId, $global:ARMGraphAPIVersion, $DisplayNameOrUPNOrEmail, $DisplayNameOrUPNOrEmail.Replace('@','_'))
+    }
+    else{
+      $uri = [string]::Format("{0}/{1}/{2}?api-version={3}&`$filter=displayName eq'{4}'", $global:ARMGraphUrl, $tenantId, $PrincipalType, $global:ARMGraphAPIVersion, $DisplayNameOrUPNOrEmail)
+    }
+        
+    $result = Invoke-WebRequest -Method GET -Uri $uri -Headers $headers
+    
+    if($result.StatusCode -ge 200 -and $result.StatusCode -le 399 -and $result.Content -ne $null){
+      $json = (ConvertFrom-Json $result.Content)
+      if($json -ne $null -and $json.value -ne $null){
+        if($json.value.Length -eq 1){
+          $return = "" | select DisplayName,ObjectId,UPNOrEmail
+          $return.DisplayName = $json.value.displayName
+          $return.ObjectId = $json.value.objectId
+          
+          if($json.value.userPrincipalName -ne $null){
+            if($json.value.userPrincipalName.ToLower() -eq $DisplayNameOrUPNOrEmail.ToLower()){
+              $return.UPNOrEmail = $json.value.userPrincipalName
+            }
+            elseif($json.value.userPrincipalName.ToLower().StartsWith($DisplayNameOrUPNOrEmail.ToLower().Replace('@','_')) -and $json.value.otherMails -ne $null -and $json.value.otherMails.Count -eq 1){
+              $return.UPNOrEmail = $json.value.otherMails
+            }
+            else{
+              $return = $null
+            }
+          }
+        }
+        else{
+          $return = $false
+        }
+      }
+    }
+  }
+  else{
+    Write-Host "Not connected to an ARM. First run Connect-ARM." -ForegroundColor Yellow
+  }
+  return $return
+}
+
+function Get-ARMDirectoryPrincipalGroupMembership($SubscriptionId, $PrincipalType, $ObjectId, $Silent=$false){
+  $return = $null
+  if($global:ARMTenantAccessTokensGraph -ne $null) {
+    $tenantId = $global:ARMSubscriptions[$SubscriptionId].TenantId
+    $acessToken = $global:ARMTenantAccessTokensGraph[$tenantId]
+    $header = "Bearer " + $acessToken
+    $headers = @{"Authorization"=$header;"Content-Type"="application/json"}
+    $uri = [string]::Format("{0}/{1}/{2}/{3}/getMemberObjects?api-version={4}", $global:ARMGraphUrl, $tenantId, $PrincipalType, $ObjectId, $global:ARMGraphAPIVersion)
+    $data = "" | Select securityEnabledOnly
+    $data.securityEnabledOnly = $true    
+    $enc = New-Object "System.Text.ASCIIEncoding"
+    $body = ConvertTo-Json -InputObject $data
+    $byteArray = $enc.GetBytes($body)
+    $contentLength = $byteArray.Length
+    $headers.Add("Content-Length",$contentLength)
+        
+    $result = Invoke-WebRequest -Method POST -Uri $uri -Headers $headers -Body $body
+    
+    if($result.StatusCode -ge 200 -and $result.StatusCode -le 399 -and $result.Content -ne $null){
+      $json = (ConvertFrom-Json $result.Content)
+      if($json -ne $null -and $json.value -ne $null){
+        $json.value
+      }
+    }
+  }
+  else{
+    Write-Host "Not connected to an ARM. First run Connect-ARM." -ForegroundColor Yellow
+  }
+  return $return
+}
+
+function Connect-ARM ($ARMAPIVersion="2014-04-01-preview", $GraphAPIVersion="1.5") {
   PROCESS {
     $global:ARMUrl = "https://management.azure.com"
     $global:ARMGraphUrl = "https://graph.windows.net"
@@ -199,6 +286,7 @@ function Execute-ARMQuery ($HTTPVerb, $SubscriptionId, $Base, $Query, $Data, $AP
       $body = ConvertTo-Json -InputObject $Data
       $byteArray = $enc.GetBytes($body)
       $contentLength = $byteArray.Length
+      $headers.Add("Content-Type","application/json")
       $headers.Add("Content-Length",$contentLength)
     }
     if(-not $Silent){

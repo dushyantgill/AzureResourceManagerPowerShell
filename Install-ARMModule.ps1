@@ -1,6 +1,18 @@
+$myDocumentsModuleFolderIsInPSModulePath = $false
+[Environment]::GetEnvironmentVariable("PSModulePath") -Split ';' | % {
+  if ($_.ToLower() -eq ([Environment]::GetFolderPath("MyDocuments") + "\WindowsPowerShell\Modules").ToLower()){
+    $myDocumentsModuleFolderIsInPSModulePath = $true
+  }
+}
+if(-not $myDocumentsModuleFolderIsInPSModulePath){
+  $newPSModulePath = [Environment]::GetEnvironmentVariable("PSModulePath") + ";" + [Environment]::GetFolderPath("MyDocuments") + "\WindowsPowerShell\Modules";
+  [Environment]::SetEnvironmentVariable("PSModulePath",$newPSModulePath, "Process")
+  [Environment]::SetEnvironmentVariable("PSModulePath",$newPSModulePath, "User")
+}
+
 $filesDirPath = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
-$moduleDirPath = ($ENV:PSModulePath -split ';')[0]
-$modulePath = $moduleDirPath + "\AzureResourceManager"
+$moduleDirPath = [Environment]::GetFolderPath("MyDocuments") + "\WindowsPowerShell\Modules"
+$modulePath = $moduleDirPath + "\ARM"
 
 if (Test-Path $modulePath)
 {
@@ -21,10 +33,10 @@ $nugetDownloadExpression = $modulePath + "\Nugets\nuget.exe install Microsoft.Id
 Invoke-Expression $nugetDownloadExpression
 
 Write-Host "Copying module files to the module directory" -ForegroundColor Green
-Copy-Item $filesDirPath"\AzureResourceManager.psd1" -Destination $modulePath -Force 
-Copy-Item $filesDirPath"\AzureResourceManager.psm1" -Destination $modulePath -Force 
+Copy-Item $filesDirPath"\ARM.psd1" -Destination $modulePath -Force 
+Copy-Item $filesDirPath"\ARM.psm1" -Destination $modulePath -Force 
 Copy-Item $filesDirPath"\Cmdlets\*.psm1" -Destination $modulePath"\Cmdlets" -Force 
 
-Import-Module AzureResourceManager
+Import-Module ARM
 
-Get-Command -Module AzureResourceManager
+Get-Command -Module ARM

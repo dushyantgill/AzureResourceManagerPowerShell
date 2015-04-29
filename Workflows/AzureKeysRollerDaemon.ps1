@@ -136,4 +136,3 @@ workflow AzureKeysRollerDaemon
     }
   }
 }
-AzureKeysRollerDaemon

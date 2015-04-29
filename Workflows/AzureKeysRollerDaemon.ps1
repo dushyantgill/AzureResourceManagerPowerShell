@@ -20,17 +20,12 @@ workflow AzureKeysRollerDaemon
 	# during execution. The below command will cause all errors in the runbook to be thrown as
 	# exceptions, therefore causing the runbook to suspend when an error is hit.
 	$ErrorActionPreference = "Stop"
-  #$clientId = Get-AutomationVariable -Name "AzureKeysRollerDaemon-ClientId"
-  $clientId = "5d82388c-3dfa-450b-91c5-20cb50f3e4bd"
-  #$clientSecret = Get-AutomationVariable -Name "AzureKeysRollerDaemon-ClientSecret"
-  $clientSecret = "RzVN/S8oJX4PxBtEZ+nh2RCLOOBtE3Xoa6F1eDGTSPk="
-  #$directory = Get-AutomationVariable -Name "DirectoryDomainName"
-  $directory = "aaddemo.com"
-  #$subscriptionId = Get-AutomationVariable -Name "SubscriptionId"
-  $subscriptionId = "c276fc76-9cd4-44c9-99a7-4fd71546436e"
-  #$keyVaultName = Get-AutomationVariable -Name "AzureKeysRollerDaemon-KeyVaultName"
-  $keyVaultName = "StorageAccountsKeyVault"
-	InlineScript {
+  $clientId = Get-AutomationVariable -Name "AzureKeysRollerDaemon-ClientId"
+  $clientSecret = Get-AutomationVariable -Name "AzureKeysRollerDaemon-ClientSecret"
+  $directory = Get-AutomationVariable -Name "DirectoryDomainName"
+  $subscriptionId = Get-AutomationVariable -Name "SubscriptionId"
+  $keyVaultName = Get-AutomationVariable -Name "AzureKeysRollerDaemon-KeyVaultName"
+  InlineScript {
     #######################################################
     #acquire token from Azure AD for Azure Resource Manager
     #######################################################

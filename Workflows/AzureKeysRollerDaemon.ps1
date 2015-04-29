@@ -1,30 +1,31 @@
 ﻿<#
 .SYNOPSIS
-    Connects to Azure using the security context of an Azure AD application. Regenrates keys 
-    of all storage accounts in the subscription. Writes the new primary keys to a Key Vault.
+  Connects to Azure using the security context of an Azure AD application. Regenrates keys 
+  of all storage accounts in the subscription. Writes the new primary keys to a Key Vault.
 
 .DESCRIPTION
-    Connects to Azure using the security context of an Azure AD application. Regenrates keys 
-    of all storage accounts in the subscription. Writes the new primary keys to a Key Vault.
-    http://www.dushyantgill.com
-    
+  Connects to Azure using the security context of an Azure AD application. Regenrates keys 
+  of all storage accounts in the subscription. Writes the new primary keys to a Key Vault.
+  http://www.dushyantgill.com
+
 .NOTES
-	Author: Dushyant Gill
-	Last Updated: 4/27
+  Author: Dushyant Gill
+  Last Updated: 4/27
 #>
 
 workflow AzureKeysRollerDaemon
 {   
-	# By default, errors in PowerShell do not cause workflows to suspend, like exceptions do.
-	# This means a runbook can still reach 'completed' state, even if it encounters errors
-	# during execution. The below command will cause all errors in the runbook to be thrown as
-	# exceptions, therefore causing the runbook to suspend when an error is hit.
-	$ErrorActionPreference = "Stop"
+  # By default, errors in PowerShell do not cause workflows to suspend, like exceptions do.
+  # This means a runbook can still reach 'completed' state, even if it encounters errors
+  # during execution. The below command will cause all errors in the runbook to be thrown as
+  # exceptions, therefore causing the runbook to suspend when an error is hit.
+  $ErrorActionPreference = "Stop"
   $clientId = Get-AutomationVariable -Name "AzureKeysRollerDaemon-ClientId"
   $clientSecret = Get-AutomationVariable -Name "AzureKeysRollerDaemon-ClientSecret"
   $directory = Get-AutomationVariable -Name "DirectoryDomainName"
   $subscriptionId = Get-AutomationVariable -Name "SubscriptionId"
   $keyVaultName = Get-AutomationVariable -Name "AzureKeysRollerDaemon-KeyVaultName"
+  $excludeStorageAccounts = Get-AutomationVariable -Name "AzureKeysRollerDaemon-ExcludeStorageAccounts"
   InlineScript {
     #######################################################
     #acquire token from Azure AD for Azure Resource Manager
@@ -75,29 +76,16 @@ workflow AzureKeysRollerDaemon
     if($storageAccounts -ne $null){
       $storageAccounts | % {
         $newPrimaryKey = $null
-        
-        #######################
-        #regenerate primary Key
-        #######################
-        $uri = [string]::Format("https://management.azure.com{0}/regenerateKey?api-version=2014-06-01",$_.id)
-        $postData = "" | select KeyType
-        $postData.KeyType = "Primary"
-        $header = "Bearer " + $armAccessToken
-        $headers = @{"Authorization"=$header;"Content-Type"="application/json"}
-        $enc = New-Object "System.Text.ASCIIEncoding"
-        $body = ConvertTo-Json $postData
-        $byteArray = $enc.GetBytes($body)
-        $contentLength = $byteArray.Length
-        $headers.Add("Content-Length",$contentLength)
-        $result = try { Invoke-RestMethod -Method POST -Uri $uri -Headers $headers -Body $body } catch { $_.Exception.Response }
-        
-        if($result.primaryKey -ne $null){
+        $exclude = $false
+        $excludeList = $using:excludeStorageAccounts
+        if(-not [string]::IsNullOrEmpty($excludeList) -and $excludeList.ToLower().Split(',').Contains($_.Name.ToLower())) {$exclude = $true}
+        if(-not $exclude){
           #######################
-          #regenerate secondary Key
+          #regenerate primary Key
           #######################
           $uri = [string]::Format("https://management.azure.com{0}/regenerateKey?api-version=2014-06-01",$_.id)
           $postData = "" | select KeyType
-          $postData.KeyType = "Secondary"
+          $postData.KeyType = "Primary"
           $header = "Bearer " + $armAccessToken
           $headers = @{"Authorization"=$header;"Content-Type"="application/json"}
           $enc = New-Object "System.Text.ASCIIEncoding"
@@ -106,30 +94,47 @@ workflow AzureKeysRollerDaemon
           $contentLength = $byteArray.Length
           $headers.Add("Content-Length",$contentLength)
           $result = try { Invoke-RestMethod -Method POST -Uri $uri -Headers $headers -Body $body } catch { $_.Exception.Response }
-          $newPrimaryKey = $result.primaryKey
-        }
-        
-        ####################################
-        # Write new primary key to Key Vault
-        ####################################
-        if($newPrimaryKey -ne $null){
-          $secretName = "StorageAccount-" + $_.name
-          $uri = [string]::Format("https://{0}.vault.azure.net/secrets/{1}?api-version=2014-12-08-preview",$using:keyVaultName, $secretName)
-          $postData = "" | select value
-          $postData.value = $newPrimaryKey
-          $header = "Bearer " + $kvAccessToken
-          $headers = @{"Authorization"=$header;"Content-Type"="application/json"}
-          $enc = New-Object "System.Text.ASCIIEncoding"
-          $body = ConvertTo-Json $postData
-          $byteArray = $enc.GetBytes($body)
-          $contentLength = $byteArray.Length
-          $headers.Add("Content-Length",$contentLength)
-          $result = try { Invoke-RestMethod -Method PUT -Uri $uri -Headers $headers -Body $body } catch { $_.Exception.Response }
-          if($result.value -ne $null) {
-            [string]::Format("Regenerated key for Storage Account {0} and saved it in Key Vault {1} as Secret {2}", $_.name, $using:keyVaultName, $result.id)
+          
+          if($result.primaryKey -ne $null){
+            #######################
+            #regenerate secondary Key
+            #######################
+            $uri = [string]::Format("https://management.azure.com{0}/regenerateKey?api-version=2014-06-01",$_.id)
+            $postData = "" | select KeyType
+            $postData.KeyType = "Secondary"
+            $header = "Bearer " + $armAccessToken
+            $headers = @{"Authorization"=$header;"Content-Type"="application/json"}
+            $enc = New-Object "System.Text.ASCIIEncoding"
+            $body = ConvertTo-Json $postData
+            $byteArray = $enc.GetBytes($body)
+            $contentLength = $byteArray.Length
+            $headers.Add("Content-Length",$contentLength)
+            $result = try { Invoke-RestMethod -Method POST -Uri $uri -Headers $headers -Body $body } catch { $_.Exception.Response }
+            $newPrimaryKey = $result.primaryKey
           }
-          else {
-            [string]::Format("Error while regenerating key for Storage Account {0} and saving it in Key Vault {1}", $_.name, $using:keyVaultName)
+          
+          ####################################
+          # Write new primary key to Key Vault
+          ####################################
+          if($newPrimaryKey -ne $null){
+            $secretName = "StorageAccount-" + $_.name
+            $uri = [string]::Format("https://{0}.vault.azure.net/secrets/{1}?api-version=2014-12-08-preview",$using:keyVaultName, $secretName)
+            $postData = "" | select value
+            $postData.value = $newPrimaryKey
+            $header = "Bearer " + $kvAccessToken
+            $headers = @{"Authorization"=$header;"Content-Type"="application/json"}
+            $enc = New-Object "System.Text.ASCIIEncoding"
+            $body = ConvertTo-Json $postData
+            $byteArray = $enc.GetBytes($body)
+            $contentLength = $byteArray.Length
+            $headers.Add("Content-Length",$contentLength)
+            $result = try { Invoke-RestMethod -Method PUT -Uri $uri -Headers $headers -Body $body } catch { $_.Exception.Response }
+            if($result.value -ne $null) {
+              [string]::Format("Regenerated key for Storage Account {0} and saved it in Key Vault {1} as Secret {2}", $_.name, $using:keyVaultName, $result.id)
+            }
+            else {
+              [string]::Format("Error while regenerating key for Storage Account {0} and saving it in Key Vault {1}", $_.name, $using:keyVaultName)
+            }
           }
         }
       }

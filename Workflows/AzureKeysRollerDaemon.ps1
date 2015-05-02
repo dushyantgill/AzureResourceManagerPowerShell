@@ -24,8 +24,7 @@ workflow AzureKeysRollerDaemon
   $clientSecret = Get-AutomationVariable -Name "AzureKeysRollerDaemon-ClientSecret"
   $directory = Get-AutomationVariable -Name "DirectoryDomainName"
   $subscriptionId = Get-AutomationVariable -Name "SubscriptionId"
-  $keyVaultName = Get-AutomationVariable -Name "AzureKeysRollerDaemon-KeyVaultName"
-  $excludeStorageAccounts = Get-AutomationVariable -Name "AzureKeysRollerDaemon-ExcludeStorageAccounts"
+  $storageAccountKeyVaultMapping = Get-AutomationVariable -Name "AzureKeysRollerDaemon-StorageAccountKeyVaultMapping"
   InlineScript {
     #######################################################
     #acquire token from Azure AD for Azure Resource Manager
@@ -64,63 +63,98 @@ workflow AzureKeysRollerDaemon
     $kvAccessToken = $result.access_token
 
     ###########################
-    #Enumerate Storage Accounts
+    #Get Storage Accounts
     ###########################
-    $storageAccounts = $null
+    
+    #First, parse the storageAccountKeyVaultMapping variable into something we can work with (a hashtable of storage account names and keyvault names)
+    $storageAccountKeyVaultAssoc = @{}
+    $storageAccounts = @()
+    $sakvMapping = $using:storageAccountKeyVaultMapping
+    $sakvMaps = $sakvMapping.Split(';')
+    $sakvMaps | % {
+      $sas = $_.Split(':')[0]
+      $kv = $_.Split(':')[1]
+      $sas.Split(',') | % {
+        $storageAccountKeyVaultAssoc.Add($_.ToLower() , $kv)
+        $storageAccounts += $_.ToLower()
+      }
+    }
+    
+    #Next, query Azure Resource Manager reosurces API to get the storage accounts. Query both, Microsoft.ClassicStorage as well as Microsoft.Storage namespaces
+    $storageAccountObjects = $null
+    $storageAccountsSearchSubFilter = ""
+    $count = 0
+    $storageAccounts | % {
+      $storageAccountsSearchSubFilter += [string]::Format("substringof('{0}', name)", $_)
+      if($count -lt $storageAccounts.Length - 1) {$storageAccountsSearchSubFilter += " or "}
+      $count++
+    }
+    $uri = [string]::Format("https://management.azure.com/subscriptions/{0}/resources?api-version=2015-01-01&`$filter=(resourceType eq 'Microsoft.ClassicStorage/storageAccounts' or resourceType eq 'Microsoft.Storage/storageAccounts') and ({1})", $using:subscriptionId, $storageAccountsSearchSubFilter)
     $header = "Bearer " + $armAccessToken
     $headers = @{"Authorization"=$header;"Content-Type"="application/json"}
-    $uri = [string]::Format("https://management.azure.com/subscriptions/{0}/providers/Microsoft.ClassicStorage/storageAccounts?api-version=2014-04-01", $using:subscriptionId)
     $result = try { Invoke-RestMethod -Method GET -Uri $uri -Headers $headers } catch { $_.Exception.Response }
-    $storageAccounts = $result.value
-
-    if($storageAccounts -ne $null){
-      $storageAccounts | % {
-        $newPrimaryKey = $null
-        $exclude = $false
-        $excludeList = $using:excludeStorageAccounts
-        if(-not [string]::IsNullOrEmpty($excludeList) -and $excludeList.ToLower().Split(',').Contains($_.Name.ToLower())) {$exclude = $true}
-        if(-not $exclude){
+    $storageAccountObjects = $result.value
+    
+    if($storageAccountObjects -ne $null){
+      $storageAccountObjects | % {
+        if($storageAccounts.Contains($_.name)){                
+          $newKey = $null
+          
           #######################
-          #regenerate primary Key
+          #regenerate Primary Key or key1
           #######################
-          $uri = [string]::Format("https://management.azure.com{0}/regenerateKey?api-version=2014-06-01",$_.id)
-          $postData = "" | select KeyType
-          $postData.KeyType = "Primary"
+          if($_.type.Equals("microsoft.storage/storageAccounts",[StringComparison]::InvariantCultureIgnoreCase)){
+            $apiVer = "2015-05-01-preview"
+            $postData1 = "" | select KeyName
+            $postData1.KeyName = "key1"
+            $postData2 = "" | select KeyName
+            $postData2.Keyname = "key2"
+          }
+          else{
+            $apiVer = "2014-06-01"
+            $postData1 = "" | select KeyType
+            $postData1.KeyType = "Primary"
+            $postData2 = "" | select KeyType
+            $postData2.KeyType = "Secondary"
+          }
+         
+          $uri = [string]::Format("https://management.azure.com{0}/regenerateKey?api-version={1}", $_.id, $apiVer)
           $header = "Bearer " + $armAccessToken
           $headers = @{"Authorization"=$header;"Content-Type"="application/json"}
           $enc = New-Object "System.Text.ASCIIEncoding"
-          $body = ConvertTo-Json $postData
+          $body = ConvertTo-Json $postData1
           $byteArray = $enc.GetBytes($body)
           $contentLength = $byteArray.Length
           $headers.Add("Content-Length",$contentLength)
           $result = try { Invoke-RestMethod -Method POST -Uri $uri -Headers $headers -Body $body } catch { $_.Exception.Response }
-          
-          if($result.primaryKey -ne $null){
+                    
+          if($result.key1 -ne $null -or $result.primaryKey -ne $null){
             #######################
-            #regenerate secondary Key
+            #regenerate Secondary Key or key2
             #######################
-            $uri = [string]::Format("https://management.azure.com{0}/regenerateKey?api-version=2014-06-01",$_.id)
-            $postData = "" | select KeyType
-            $postData.KeyType = "Secondary"
             $header = "Bearer " + $armAccessToken
             $headers = @{"Authorization"=$header;"Content-Type"="application/json"}
-            $enc = New-Object "System.Text.ASCIIEncoding"
-            $body = ConvertTo-Json $postData
+            $body = ConvertTo-Json $postData2
             $byteArray = $enc.GetBytes($body)
             $contentLength = $byteArray.Length
             $headers.Add("Content-Length",$contentLength)
             $result = try { Invoke-RestMethod -Method POST -Uri $uri -Headers $headers -Body $body } catch { $_.Exception.Response }
-            $newPrimaryKey = $result.primaryKey
+                        
+            if($_.type.Equals("microsoft.storage/storageAccounts",[StringComparison]::InvariantCultureIgnoreCase)){
+              $newKey = $result.key1
+            }
+            else{
+              $newKey = $result.primaryKey
+            }
           }
           
           ####################################
-          # Write new primary key to Key Vault
+          # Write new key to the Key Vault
           ####################################
-          if($newPrimaryKey -ne $null){
-            $secretName = "StorageAccount-" + $_.name
-            $uri = [string]::Format("https://{0}.vault.azure.net/secrets/{1}?api-version=2014-12-08-preview",$using:keyVaultName, $secretName)
+          if($newKey -ne $null){
+            $uri = [string]::Format("https://{0}.vault.azure.net/secrets/{1}?api-version=2014-12-08-preview", $storageAccountKeyVaultAssoc[$_.name], $_.name)
             $postData = "" | select value
-            $postData.value = $newPrimaryKey
+            $postData.value = $newKey
             $header = "Bearer " + $kvAccessToken
             $headers = @{"Authorization"=$header;"Content-Type"="application/json"}
             $enc = New-Object "System.Text.ASCIIEncoding"
@@ -129,11 +163,12 @@ workflow AzureKeysRollerDaemon
             $contentLength = $byteArray.Length
             $headers.Add("Content-Length",$contentLength)
             $result = try { Invoke-RestMethod -Method PUT -Uri $uri -Headers $headers -Body $body } catch { $_.Exception.Response }
+            
             if($result.value -ne $null) {
-              [string]::Format("Regenerated key for Storage Account {0} and saved it in Key Vault {1} as Secret {2}", $_.name, $using:keyVaultName, $result.id)
+              [string]::Format("Regenerated key for Storage Account {0} and saved it in Key Vault {1} as Secret {2}", $_.name, $storageAccountKeyVaultAssoc[$_.name], $result.id)
             }
             else {
-              [string]::Format("Error while regenerating key for Storage Account {0} and saving it in Key Vault {1}", $_.name, $using:keyVaultName)
+              [string]::Format("Error while regenerating key for Storage Account {0} and saving it in Key Vault {1}", $_.name, $storageAccountKeyVaultAssoc[$_.name])
             }
           }
         }

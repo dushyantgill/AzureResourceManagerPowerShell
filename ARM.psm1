@@ -269,6 +269,7 @@ function Connect-ARM ($ARMAPIVersion="2014-04-01-preview", $GraphAPIVersion="1.5
           $subscription.tenantId = $tenant.tenantId
           $subscription.tenantName = $tenantName 
           $global:ARMSubscriptions.Add($subscription.subscriptionId, $subscription)
+          if(-not $global:ARMSubscriptions.Contains($subscription.displayName)){$global:ARMSubscriptions.Add($subscription.displayName, $subscription)}
         }
       }
     }

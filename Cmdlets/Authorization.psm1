@@ -20,7 +20,7 @@ function Get-ARMAccessChangeHistory () {
         $query = $query + "&eventTimestamp le '" + [System.Web.HttpUtility]::UrlEncode(([DateTime]::UTCNow).ToString("o")) + "' and ";
         $query = $query + "&eventTimestamp ge '" + [System.Web.HttpUtility]::UrlEncode(([DateTime]::UTCNow - [TimeSpan]::FromDays($Days)).ToString("o")) + "'";
         
-        $events = Execute-ARMQuery -HTTPVerb GET -SubscriptionId $subscription.subscriptionId -Base $base -Query $query -APIVersion "2014-04-01" -Silent
+        $events = try {Execute-ARMQuery -HTTPVerb GET -SubscriptionId $subscription.subscriptionId -Base $base -Query $query -APIVersion "2014-04-01" -Silent} catch{}
         
         $events | % {
           if($_.httpRequest -ne $null){
@@ -67,13 +67,13 @@ function Get-ARMAccessChangeHistory () {
               #get the role id from the request body
               $out.RoleId = $messageBody.properties.roleDefinitionId
               #convert the role id to role name by querying the Microsoft.Authorization resource provider
-              $role = Execute-ARMQuery -HTTPVerb GET -SubscriptionId $subscription.subscriptionId -Base $out.RoleId -APIVersion "2014-07-01-preview" -Silent
+              $role = try{Execute-ARMQuery -HTTPVerb GET -SubscriptionId $subscription.subscriptionId -Base $out.RoleId -APIVersion "2014-07-01-preview" -Silent} catch{}
               if($role -ne $null){$out.RoleName = $role.properties.roleName}
               
               #from the request body, get the objectid of the user or group to whom role was assigned
               $out.SubjectId = $messageBody.properties.principalId
               #covert the object id of the subject to name and type by querying the Azure AD Graph API
-              $subject = Get-ARMDirectoryObject -SubscriptionId $subscription.subscriptionId -ObjectId $out.SubjectId -Silent $true
+              $subject = try{Get-ARMDirectoryObject -SubscriptionId $subscription.subscriptionId -ObjectId $out.SubjectId -Silent $true} catch{}
               if($subject -ne $null){
                 $out.SubjectType = $subject.objectType
                 $out.SubjectName = $subject.displayName
@@ -90,12 +90,12 @@ function Get-ARMAccessChangeHistory () {
             #determine whether the role assignment was added/deleted on subscription or resourcegroup or the resource
             if($out.scope.ToLower().Contains("subscription") -and $out.scope.Split('/').Length -lt 4){
               $out.ScopeType = "Subscription"
-              $scope = Execute-ARMQuery -HTTPVerb GET -SubscriptionId $subscription.subscriptionId -Base $out.scope  -APIVersion "2014-04-01-preview" -Silent
+              $scope = try{Execute-ARMQuery -HTTPVerb GET -SubscriptionId $subscription.subscriptionId -Base $out.scope  -APIVersion "2014-04-01-preview" -Silent} catch{}
               if($scope -ne $null){$out.ScopeName = $scope.displayName + " (Id: " + $scope.subscriptionId + ")"}
             }
             elseif($out.scope.ToLower().Contains("resourcegroups") -and $out.scope.Split('/').Length -lt 6){
               $out.ScopeType = "Resource Group"
-              $scope = Execute-ARMQuery -HTTPVerb GET -SubscriptionId $subscription.subscriptionId -Base $out.scope  -APIVersion "2014-04-01-preview" -Silent
+              $scope = try{Execute-ARMQuery -HTTPVerb GET -SubscriptionId $subscription.subscriptionId -Base $out.scope  -APIVersion "2014-04-01-preview" -Silent} catch{}
               if($scope -ne $null){$out.ScopeName = $scope.name + " (Region: " + $scope.location + ")"}
             }
             elseif($out.scope.ToLower().Contains("providers") -and $out.scope.Split('/').Length -gt 7){
@@ -169,28 +169,28 @@ function Get-ARMAccessAssignments () {
         if(-not [string]::IsNullOrEmpty($User) -or -not [string]::IsNullOrEmpty($Group) -or -not [string]::IsNullOrEmpty($ServicePrincipal)){
           if(-not [string]::IsNullOrEmpty($User)){
             $principalType = "users"
-            $principal = Resolve-ARMDirectoryPrincipal -SubscriptionId $subscription.subscriptionId -PrincipalType $principalType -DisplayNameOrUPNOrEmail $User -Silent $true
+            $principal = try{Resolve-ARMDirectoryPrincipal -SubscriptionId $subscription.subscriptionId -PrincipalType $principalType -DisplayNameOrUPNOrEmail $User -Silent $true} catch{}
           }
           elseif(-not [string]::IsNullOrEmpty($Group)){
             $principalType = "groups"        
-            $principal = Resolve-ARMDirectoryPrincipal -SubscriptionId $subscription.subscriptionId -PrincipalType $principalType -DisplayNameOrUPNOrEmail $Group -Silent $true
+            $principal = try{Resolve-ARMDirectoryPrincipal -SubscriptionId $subscription.subscriptionId -PrincipalType $principalType -DisplayNameOrUPNOrEmail $Group -Silent $true} catch{}
           }
           elseif(-not [string]::IsNullOrEmpty($ServicePrincipal)){
             $principalType = "servicePrincipals"
-            $principal = Resolve-ARMDirectoryPrincipal -SubscriptionId $subscription.subscriptionId -PrincipalType $principalType -DisplayNameOrUPNOrEmail $ServicePrincipal -Silent $true
+            $principal = try{Resolve-ARMDirectoryPrincipal -SubscriptionId $subscription.subscriptionId -PrincipalType $principalType -DisplayNameOrUPNOrEmail $ServicePrincipal -Silent $true} catch{}
           }
         }
         
         if($principal -ne $null){
           $filterByPrincipal = $true
           $principalObjectIdAndGroupsObjectIds += $principal.ObjectId
-          $principalGroupMembership = Get-ARMDirectoryPrincipalGroupMembership -SubscriptionId $subscription.subscriptionId -PrincipalType $principalType -ObjectId $principal.objectId -Silent $true
+          $principalGroupMembership = try{Get-ARMDirectoryPrincipalGroupMembership -SubscriptionId $subscription.subscriptionId -PrincipalType $principalType -ObjectId $principal.objectId -Silent $true} catch{}
           if($principalGroupMembership -ne $null){$principalGroupMembership | % {$principalObjectIdAndGroupsObjectIds += $_}}
           if($principal.UPNOrEmail -ne $null){$principalEmailOrUPN = $principal.UPNOrEmail}
         }
 
         $base = "/subscriptions/" + $subscription.subscriptionId + "/providers/Microsoft.Authorization/roleAssignments"
-        $roleAssignments = Execute-ARMQuery -HTTPVerb GET -SubscriptionId $subscription.subscriptionId -Base $base -APIVersion "2014-10-01-preview" -Silent
+        $roleAssignments = try{Execute-ARMQuery -HTTPVerb GET -SubscriptionId $subscription.subscriptionId -Base $base -APIVersion "2014-10-01-preview" -Silent} catch{}
               
         $roleAssignments | % {
           if($_.id -ne $null){
@@ -200,7 +200,7 @@ function Get-ARMAccessAssignments () {
             $out.SubscriptionId = $subscription.subscriptionId
             
             $out.RoleId = $_.properties.roleDefinitionId
-            $role = Execute-ARMQuery -HTTPVerb GET -SubscriptionId $subscription.subscriptionId -Base $out.RoleId -APIVersion "2014-07-01-preview" -Silent
+            $role = try{Execute-ARMQuery -HTTPVerb GET -SubscriptionId $subscription.subscriptionId -Base $out.RoleId -APIVersion "2014-07-01-preview" -Silent} catch{}
             if($role -ne $null){$out.RoleName = $role.properties.roleName}
             
             $out.SubjectId = $_.properties.principalId
@@ -216,12 +216,12 @@ function Get-ARMAccessAssignments () {
             #determine whether the role assignment was added/deleted on subscription or resourcegroup or the resource
             if($out.scope.ToLower().Contains("subscription") -and $out.scope.Split('/').Length -lt 4){
               $out.ScopeType = "Subscription"
-              $scope = Execute-ARMQuery -HTTPVerb GET -SubscriptionId $subscription.subscriptionId -Base $out.scope  -APIVersion "2014-04-01-preview" -Silent
+              $scope = try{Execute-ARMQuery -HTTPVerb GET -SubscriptionId $subscription.subscriptionId -Base $out.scope  -APIVersion "2014-04-01-preview" -Silent} catch{}
               if($scope -ne $null){$out.ScopeName = $scope.displayName + " (Id: " + $scope.subscriptionId + ")"}
             }
             elseif($out.scope.ToLower().Contains("resourcegroups") -and $out.scope.Split('/').Length -lt 6){
               $out.ScopeType = "Resource Group"
-              $scope = Execute-ARMQuery -HTTPVerb GET -SubscriptionId $subscription.subscriptionId -Base $out.scope  -APIVersion "2014-04-01-preview" -Silent
+              $scope = try{Execute-ARMQuery -HTTPVerb GET -SubscriptionId $subscription.subscriptionId -Base $out.scope  -APIVersion "2014-04-01-preview" -Silent} catch{}
               if($scope -ne $null){$out.ScopeName = $scope.name + " (Region: " + $scope.location + ")"}
             }
             elseif($out.scope.ToLower().Contains("providers") -and $out.scope.Split('/').Length -gt 7){

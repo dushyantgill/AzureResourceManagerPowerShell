@@ -280,7 +280,7 @@ function Connect-ARM ($ARMAPIVersion="2015-01-01", $GraphAPIVersion="1.6", $ARMU
   }
 }
 
-function Execute-ARMQuery ($HTTPVerb, $SubscriptionId=$global:ARMDefaultSubscriptionID, $Base, $Query, $Data, $APIVersion=$global:ARMAPIVersion, [switch] $Silent) {
+function Execute-ARMQuery ($HTTPVerb="GET", $SubscriptionId=$global:ARMDefaultSubscriptionID, $Base, $Query, $Data, $APIVersion=$global:ARMAPIVersion, [switch] $Silent) {
   $return = $null
   if($global:ARMTenantAccessTokensARM -ne $null) {
     $header = "Bearer " + $global:ARMTenantAccessTokensARM[$global:ARMSubscriptions[$SubscriptionId].TenantId]

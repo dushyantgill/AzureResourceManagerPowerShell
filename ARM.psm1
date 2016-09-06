@@ -235,13 +235,15 @@ function Get-ARMDirectoryPrincipalGroupMembership($SubscriptionId, $PrincipalTyp
   return $return
 }
 
-function Connect-ARM ($ARMAPIVersion="2014-04-01-preview", $GraphAPIVersion="1.5") {
+function Connect-ARM ($ARMAPIVersion="2015-01-01", $GraphAPIVersion="1.6", $ARMUrl="https://management.azure.com") {
   PROCESS {
-    $global:ARMUrl = "https://management.azure.com"
+    $global:ARMUrl = $ARMUrl
+    $endptres = Invoke-RestMethod "${ARMurl}/metadata/endpoints?api-version=1.0"
+    $ARMResourceId = $($endptres.authentication.audiences[0])
     $global:ARMGraphUrl = "https://graph.windows.net"
     $global:ARMAPIVersion = $ARMAPIVersion
     $global:ARMGraphAPIVersion = $GraphAPIVersion
-    $global:ARMCommonARMAccessToken = (Get-AuthenticationResult -ResourceAppIdURI "https://management.core.windows.net/").AccessToken
+    $global:ARMCommonARMAccessToken = (Get-AuthenticationResult -ResourceAppIdURI $ARMResourceId).AccessToken
     $global:ARMTenants = @()
     $global:ARMTenantAccessTokensARM = @{}
     $global:ARMTenantAccessTokensGraph = @{}
@@ -250,7 +252,7 @@ function Connect-ARM ($ARMAPIVersion="2014-04-01-preview", $GraphAPIVersion="1.5
     $directories | % {
       $tenant = $_
       $global:ARMTenants = $global:ARMTenants + $tenant.tenantId; 
-      $tenantAccessTokenARM = (Get-AuthenticationResult -Tenant $tenant.tenantId -Prompt $false -ResourceAppIdURI "https://management.core.windows.net/").AccessToken
+      $tenantAccessTokenARM = (Get-AuthenticationResult -Tenant $tenant.tenantId -Prompt $false -ResourceAppIdURI $ARMResourceId).AccessToken
       $global:ARMTenantAccessTokensARM.Add($tenant.tenantId, $tenantAccessTokenARM);
       $tenantAccessTokenGraph = (Get-AuthenticationResult -Tenant $tenant.tenantId -Prompt $false -ResourceAppIdURI "https://graph.windows.net/").AccessToken
       $global:ARMTenantAccessTokensGraph.Add($tenant.tenantId, $tenantAccessTokenGraph);
@@ -259,7 +261,8 @@ function Connect-ARM ($ARMAPIVersion="2014-04-01-preview", $GraphAPIVersion="1.5
       $tenantInfo = Get-ARMDirectoryInfo -TenantId $tenant.tenantId -AccessToken $tenantAccessTokenGraph -Silent $true
       if($tenantInfo.verifiedDomains -ne $null){$tenantInfo.verifiedDomains | % {if ($_.default){ $tenantName = $_.name;}}}
       
-      Get-ARMSubscriptions -AccessToken $tenantAccessTokenARM -Silent $true | % {
+      $subscriptions = Get-ARMSubscriptions -AccessToken $tenantAccessTokenARM -Silent $true 
+      $subscriptions| % {
         if($_.subscriptionId -ne $null){
           $subscription = "" | Select-Object subscriptionId, displayName, state, id, tenantId, tenantName
           $subscription.subscriptionId = $_.subscriptionId
@@ -270,13 +273,14 @@ function Connect-ARM ($ARMAPIVersion="2014-04-01-preview", $GraphAPIVersion="1.5
           $subscription.tenantName = $tenantName 
           $global:ARMSubscriptions.Add($subscription.subscriptionId, $subscription)
           if(-not $global:ARMSubscriptions.Contains($subscription.displayName)){$global:ARMSubscriptions.Add($subscription.displayName, $subscription)}
+          $global:ARMDefaultSubscriptionID = $subscriptions[0].subscriptionId
         }
       }
     }
   }
 }
 
-function Execute-ARMQuery ($HTTPVerb, $SubscriptionId, $Base, $Query, $Data, $APIVersion=$global:ARMAPIVersion, [switch] $Silent) {
+function Execute-ARMQuery ($HTTPVerb, $SubscriptionId=$global:ARMDefaultSubscriptionID, $Base, $Query, $Data, $APIVersion=$global:ARMAPIVersion, [switch] $Silent) {
   $return = $null
   if($global:ARMTenantAccessTokensARM -ne $null) {
     $header = "Bearer " + $global:ARMTenantAccessTokensARM[$global:ARMSubscriptions[$SubscriptionId].TenantId]
